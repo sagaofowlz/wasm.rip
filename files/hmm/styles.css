@@ -1,0 +1,100 @@
+:root {
+  color-scheme: dark;
+  background: #000;
+  color: #fff;
+  font-family: "Lucida Console", Monaco, monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #000;
+}
+body { overscroll-behavior: none; }
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #000;
+}
+#game-canvas {
+  display: block;
+  width: min(100vw, 133.333333dvh);
+  height: min(100dvh, 75vw);
+  aspect-ratio: 4 / 3;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000;
+  image-rendering: pixelated;
+  outline: none;
+  touch-action: none;
+}
+#debug-toggle {
+  position: fixed;
+  z-index: 20;
+  top: max(7px, env(safe-area-inset-top));
+  right: max(7px, env(safe-area-inset-right));
+  min-width: 31px;
+  height: 22px;
+  padding: 2px 5px;
+  border: 1px solid rgba(255,255,255,.38);
+  border-radius: 2px;
+  background: rgba(0,0,0,.48);
+  color: rgba(255,255,255,.62);
+  font: 10px/1 "Lucida Console", Monaco, monospace;
+  letter-spacing: .5px;
+  opacity: .28;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+#debug-toggle:hover,
+#debug-toggle:focus-visible,
+#debug-toggle[aria-expanded="true"] {
+  opacity: .95;
+  color: #fff;
+  border-color: rgba(255,255,255,.8);
+  outline: none;
+}
+#debug-panel {
+  position: fixed;
+  z-index: 19;
+  top: max(36px, calc(env(safe-area-inset-top) + 29px));
+  right: max(7px, env(safe-area-inset-right));
+  width: min(540px, calc(100vw - 14px));
+  max-height: min(48vh, 320px);
+  padding: 9px 10px;
+  overflow: hidden;
+  border: 1px solid #777;
+  background: rgba(0,0,0,.94);
+  box-shadow: 0 2px 18px rgba(0,0,0,.7);
+}
+.debug-title {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+.debug-title span { color: #888; letter-spacing: 0; }
+#debug-output {
+  max-height: calc(min(48vh, 320px) - 42px);
+  margin: 0;
+  overflow: auto;
+  color: #baffba;
+  font: 11px/1.5 "Lucida Console", Monaco, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+[hidden] { display: none !important; }

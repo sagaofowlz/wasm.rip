@@ -1,0 +1,163 @@
+name: Build and deploy hmm Undertale webport
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out hmm webport
+        uses: actions/checkout@v4
+
+      - name: Check out Starfait runner source
+        uses: actions/checkout@v4
+        with:
+          repository: MrPowerGamerBR/Starfait
+          ref: 2da1b9dd287fce70eae68a8e84b69816bdddd1a7
+          path: starfait-src
+          submodules: recursive
+
+      - name: Set up Java for Kotlin/Wasm build
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build Starfait browser runtime
+        env:
+          GRADLE_OPTS: -Xmx4096m -Xms1024m
+        run: |
+          set -euo pipefail
+          python3 scripts/patch-starfait-web.py \
+            starfait-src/starfait-runner-web/src/wasmJsMain/kotlin/com/mrpowergamerbr/starfait/web/StarfaitRunner.kt
+          cd starfait-src
+          chmod +x gradlew
+          ./gradlew :starfait-runner-web:wasmJsBrowserProductionLibraryDistribution --no-daemon
+
+      - name: Assemble static site and game asset manifest
+        run: |
+          set -euo pipefail
+          mkdir -p dist/runtime/starfait dist/third-party
+          cp index.html styles.css app.js dist/
+          cp THIRD_PARTY_NOTICES.md dist/third-party/
+          cp starfait-src/LICENSE dist/third-party/STARFAIT-LICENSE.txt
+
+          if [ -f game.unx ]; then cp game.unx dist/game.unx; fi
+          if [ -d mus ]; then cp -a mus dist/mus; fi
+
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          def describe(path: Path, web_path: str, name: str):
+              digest = hashlib.sha256()
+              with path.open('rb') as stream:
+                  for block in iter(lambda: stream.read(1024 * 1024), b''):
+                      digest.update(block)
+              return {
+                  'path': web_path,
+                  'name': name,
+                  'size': path.stat().st_size,
+                  'sha256': digest.hexdigest(),
+              }
+
+          game_path = Path('game.unx')
+          game = describe(game_path, 'game.unx', 'game.unx') if game_path.is_file() else None
+          music = []
+          music_root = Path('mus')
+          if music_root.is_dir():
+              seen = set()
+              for path in sorted(p for p in music_root.rglob('*') if p.is_file() and p.suffix.lower() == '.ogg'):
+                  name = path.name
+                  if name in seen:
+                      raise SystemExit(f'Duplicate audio basename cannot be flattened for Starfait: {name}')
+                  seen.add(name)
+                  rel = path.relative_to(Path('.')).as_posix()
+                  music.append(describe(path, rel, name))
+
+          version_payload = json.dumps({'game': game, 'music': music}, sort_keys=True).encode()
+          manifest = {
+              'version': hashlib.sha256(version_payload).hexdigest(),
+              'game': game,
+              'music': music,
+          }
+          Path('dist/asset-manifest.json').write_text(json.dumps(manifest, separators=(',', ':')))
+          print(f"Asset manifest created: game={'present' if game else 'missing'}, external audio={len(music)} files")
+          PY
+
+      - name: Copy generated Kotlin/Wasm library
+        run: |
+          set -euo pipefail
+          LIB_DIR="starfait-src/starfait-runner-web/build/compileSync/wasmJs/main/productionLibrary/kotlin"
+          if [ ! -d "$LIB_DIR" ]; then
+            echo "Expected Kotlin/Wasm library output not found: $LIB_DIR"
+            find starfait-src/starfait-runner-web/build -type f | head -n 100
+            exit 1
+          fi
+          cp -a "$LIB_DIR"/. dist/runtime/starfait/
+
+          ENTRY_FILE="$(python3 - <<'PY'
+          from pathlib import Path
+          root = Path('dist/runtime/starfait')
+          matches = []
+          for path in root.rglob('*.mjs'):
+              if path.name.endswith('.uninstantiated.mjs'):
+                  continue
+              try:
+                  content = path.read_text(encoding='utf-8', errors='ignore')
+              except OSError:
+                  continue
+              if all(token in content for token in ('createRunner', 'startRunner', 'onKeyDown', 'resumeAudioContext')):
+                  matches.append(path.relative_to(root).as_posix())
+          if len(matches) != 1:
+              raise SystemExit(f'Expected one Starfait JS module entry; found: {matches}')
+          print(matches[0])
+          PY
+          )"
+          printf '{"entry":"%s"}\n' "$ENTRY_FILE" > dist/runtime/starfait/entry.json
+          test -s "dist/runtime/starfait/$ENTRY_FILE"
+          find dist/runtime/starfait -maxdepth 2 -type f -printf '%P (%k KB)\n' | sort
+
+      - name: Vendor Kotlin/Wasm npm dependency
+        run: |
+          set -euo pipefail
+          npm install --prefix .web-deps --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @js-joda/core@6.1.0
+          JODA_DIR=".web-deps/node_modules/@js-joda/core"
+          test -s "$JODA_DIR/dist/js-joda.esm.js"
+          test -s "$JODA_DIR/LICENSE"
+          mkdir -p dist/runtime/starfait/vendor
+          cp "$JODA_DIR/dist/js-joda.esm.js" dist/runtime/starfait/vendor/js-joda.esm.js
+          cp "$JODA_DIR/LICENSE" dist/third-party/JS-JODA-LICENSE.txt
+          echo "Vendored @js-joda/core 6.1.0 for the browser import map."
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
